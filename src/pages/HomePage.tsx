@@ -1,36 +1,64 @@
 import React, { useState, useEffect } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { motion } from 'motion/react';
-import { Flame, Clock, Star, ChevronRight, Play, TrendingUp, Lock } from 'lucide-react';
+import { Flame, Clock, Star, ChevronRight, Play, TrendingUp, Lock, Trophy, Coins } from 'lucide-react';
 import { Manhwa } from '../types';
-import { io } from 'socket.io-client';
-
-const socket = io();
+import socket from '../socket';
 
 export default function HomePage() {
   const [manhwas, setManhwas] = useState<Manhwa[]>([]);
   const [hero, setHero] = useState<any>(null);
+  const [leaderboard, setLeaderboard] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchParams] = useSearchParams();
   const search = searchParams.get('search');
 
   useEffect(() => {
     fetch('/api/manhwa')
-      .then(res => {
-        if (!res.ok) throw new Error('Failed to fetch manhwas');
+      .then(async res => {
+        if (!res.ok) {
+          const errorData = await res.json().catch(() => ({}));
+          throw new Error(`Failed to fetch manhwas: ${errorData.details || errorData.error || res.statusText}`);
+        }
         return res.json();
       })
       .then(data => {
         setManhwas(data);
       })
       .catch(err => {
-        console.error(err);
+        console.error("Fetch error:", err.message);
       });
 
     fetch('/api/settings/hero_banner')
-      .then(res => res.json())
+      .then(async res => {
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || 'Hero banner not found');
+        }
+        return res.json();
+      })
       .then(data => {
         setHero(data);
+      })
+      .catch(err => {
+        console.warn("Hero banner fetch failed, using fallback:", err.message);
+        // Fallback hero banner
+        setHero({
+          title: "Welcome to Manhwa World",
+          description: "Discover the best manhwa, manga, and comics here. Start your journey today!",
+          image: "https://picsum.photos/seed/manhwa-fallback/1920/1080",
+          button_text: "Explore Now",
+          link: "/popular"
+        });
+      });
+
+    fetch('/api/leaderboard')
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch leaderboard');
+        return res.json();
+      })
+      .then(data => {
+        setLeaderboard(data);
         setLoading(false);
       })
       .catch(err => {
@@ -183,56 +211,91 @@ export default function HomePage() {
       </section>
 
       {/* Latest Chapters Section */}
-      <section>
-        <div className="flex items-center justify-between mb-10">
-          <div className="space-y-1">
-            <h2 className="text-3xl font-bold tracking-tight font-display">Latest Updates</h2>
-            <p className="text-text-secondary text-sm font-medium opacity-60">Freshly updated chapters</p>
+      <section className="grid grid-cols-1 lg:grid-cols-12 gap-12">
+        <div className="lg:col-span-8">
+          <div className="flex items-center justify-between mb-10">
+            <div className="space-y-1">
+              <h2 className="text-3xl font-bold tracking-tight font-display">Latest Updates</h2>
+              <p className="text-text-secondary text-sm font-medium opacity-60">Freshly updated chapters</p>
+            </div>
           </div>
-          <Link to="/latest" className="group flex items-center gap-2 text-accent font-bold text-sm">
-            View All <ChevronRight size={18} className="group-hover:translate-x-1 transition-transform" />
-          </Link>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {filteredManhwas.slice(0, 8).map((manhwa) => (
+              <Link 
+                key={manhwa.id} 
+                to={`/manhwa/${manhwa.id}`}
+                className="flex gap-5 p-5 bg-secondary hover:bg-white/5 rounded-[2rem] border border-white/5 transition-all duration-500 group"
+              >
+                <div className="relative w-24 h-32 flex-shrink-0 rounded-2xl overflow-hidden shadow-xl">
+                  <img 
+                    src={manhwa.poster || 'https://picsum.photos/seed/manga/300/400'} 
+                    alt={manhwa.title}
+                    className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
+                    referrerPolicy="no-referrer"
+                  />
+                </div>
+                <div className="flex flex-col justify-center flex-1 min-w-0">
+                  <h3 className="text-lg font-bold text-text-primary group-hover:text-accent transition-colors truncate">
+                    {manhwa.title}
+                  </h3>
+                  <div className="mt-3 space-y-2">
+                    {manhwa.latest_chapters && manhwa.latest_chapters.length > 0 ? (
+                      manhwa.latest_chapters.map((ch: any) => (
+                        <div key={ch.id} className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-text-secondary">Chapter {ch.chapter_number}</span>
+                            {ch.coin_price > 0 && <Star size={10} className="text-accent fill-accent" />}
+                          </div>
+                          <span className="text-[10px] font-medium text-text-secondary/40">
+                            {new Date(ch.created_at).toLocaleDateString()}
+                          </span>
+                        </div>
+                      ))
+                    ) : (
+                      <div className="text-xs font-bold text-text-secondary/30 italic">No chapters yet</div>
+                    )}
+                  </div>
+                </div>
+              </Link>
+            ))}
+          </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {filteredManhwas.slice(0, 6).map((manhwa) => (
-            <Link 
-              key={manhwa.id} 
-              to={`/manhwa/${manhwa.id}`}
-              className="flex gap-5 p-5 bg-secondary hover:bg-white/5 rounded-[2rem] border border-white/5 transition-all duration-500 group"
-            >
-              <div className="relative w-24 h-32 flex-shrink-0 rounded-2xl overflow-hidden shadow-xl">
-                <img 
-                  src={manhwa.poster || 'https://picsum.photos/seed/manga/300/400'} 
-                  alt={manhwa.title}
-                  className="w-full h-full object-cover group-hover:scale-110 transition-transform duration-700"
-                  referrerPolicy="no-referrer"
-                />
+        {/* Leaderboard Sidebar */}
+        <div className="lg:col-span-4">
+          <div className="bg-secondary p-8 rounded-[2.5rem] border border-white/5 shadow-2xl">
+            <div className="flex items-center gap-3 mb-8">
+              <div className="p-3 bg-accent/10 rounded-2xl text-accent">
+                <Trophy size={24} />
               </div>
-              <div className="flex flex-col justify-center flex-1 min-w-0">
-                <h3 className="text-lg font-bold text-text-primary group-hover:text-accent transition-colors truncate">
-                  {manhwa.title}
-                </h3>
-                <div className="mt-3 space-y-2">
-                  {manhwa.latest_chapters && manhwa.latest_chapters.length > 0 ? (
-                    manhwa.latest_chapters.map((ch: any) => (
-                      <div key={ch.id} className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs font-bold text-text-secondary">Chapter {ch.chapter_number}</span>
-                          {ch.coin_price > 0 && <Star size={10} className="text-accent fill-accent" />}
-                        </div>
-                        <span className="text-[10px] font-medium text-text-secondary/40">
-                          {new Date(ch.created_at).toLocaleDateString()}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="text-xs font-bold text-text-secondary/30 italic">No chapters yet</div>
-                  )}
+              <div>
+                <h2 className="text-xl font-bold font-display">Leaderboard</h2>
+                <p className="text-[10px] font-black text-text-secondary uppercase tracking-widest opacity-40">Top Coin Holders</p>
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              {leaderboard.map((u, idx) => (
+                <div key={u.id} className="flex items-center justify-between p-4 bg-primary/50 rounded-2xl border border-white/5 group hover:border-accent/30 transition-all">
+                  <div className="flex items-center gap-4">
+                    <div className={`w-8 h-8 rounded-xl flex items-center justify-center font-black text-xs ${
+                      idx === 0 ? 'bg-yellow-500 text-black' : 
+                      idx === 1 ? 'bg-slate-300 text-black' : 
+                      idx === 2 ? 'bg-amber-600 text-white' : 
+                      'bg-white/5 text-text-secondary'
+                    }`}>
+                      {idx + 1}
+                    </div>
+                    <span className="font-bold text-sm group-hover:text-accent transition-colors">{u.username}</span>
+                  </div>
+                  <div className="flex items-center gap-1.5 text-yellow-500 font-black text-xs">
+                    <Coins size={12} /> {u.coins}
+                  </div>
                 </div>
-              </div>
-            </Link>
-          ))}
+              ))}
+            </div>
+          </div>
         </div>
       </section>
     </div>

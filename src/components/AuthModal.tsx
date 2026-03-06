@@ -32,7 +32,13 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(formData)
       });
-      const data = await res.json();
+      
+      let data;
+      try {
+        data = await res.json();
+      } catch (e) {
+        throw new Error('Server returned an invalid response');
+      }
 
       if (res.ok) {
         if (isLogin) {

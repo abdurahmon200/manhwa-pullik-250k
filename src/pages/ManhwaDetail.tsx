@@ -3,13 +3,11 @@ import { useParams, Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { 
   Star, Bookmark, Share2, MessageSquare, 
-  Play, ChevronRight, Lock, Trash2, Send, Clock
+  Play, ChevronRight, Lock, Trash2, Send, Clock, BookOpen
 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { Manhwa, Chapter, Comment } from '../types';
-import { io } from 'socket.io-client';
-
-const socket = io();
+import socket from '../socket';
 
 export default function ManhwaDetail() {
   const { id } = useParams();
@@ -37,7 +35,10 @@ export default function ManhwaDetail() {
       });
 
     fetch(`/api/manhwa/${id}/comments`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch comments');
+        return res.json();
+      })
       .then(data => setComments(data))
       .catch(err => console.error("Comments fetch error:", err));
 
@@ -45,14 +46,22 @@ export default function ManhwaDetail() {
       fetch('/api/user/bookmarks', {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      .then(res => res.json())
-      .then(data => setIsBookmarked(data.some((b: any) => b.id === Number(id))));
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch bookmarks');
+        return res.json();
+      })
+      .then(data => setIsBookmarked(data.some((b: any) => b.id === id)))
+      .catch(err => console.error("Bookmarks fetch error:", err));
 
       fetch('/api/user/purchases', {
         headers: { 'Authorization': `Bearer ${token}` }
       })
-      .then(res => res.json())
-      .then(data => setPurchasedChapters(data));
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch purchases');
+        return res.json();
+      })
+      .then(data => setPurchasedChapters(data))
+      .catch(err => console.error("Purchases fetch error:", err));
     }
 
     socket.on('new_comment', (data) => {
@@ -63,7 +72,7 @@ export default function ManhwaDetail() {
 
     socket.on('comment_deleted', (data) => {
       if (data.mangaId === id) {
-        setComments(prev => prev.filter(c => c.id !== Number(data.commentId)));
+        setComments(prev => prev.filter(c => c.id !== data.commentId));
       }
     });
 
@@ -75,12 +84,17 @@ export default function ManhwaDetail() {
 
   const handleBookmark = async () => {
     if (!user) return alert('Please login to bookmark');
-    const res = await fetch(`/api/manhwa/${id}/bookmark`, {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
-    const data = await res.json();
-    setIsBookmarked(!data.removed);
+    try {
+      const res = await fetch(`/api/manhwa/${id}/bookmark`, {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Bookmark failed');
+      const data = await res.json();
+      setIsBookmarked(!data.removed);
+    } catch (err) {
+      console.error(err);
+    }
   };
 
   const handleComment = async (e: React.FormEvent) => {
@@ -100,14 +114,37 @@ export default function ManhwaDetail() {
   };
 
   const deleteComment = async (commentId: number) => {
-    await fetch(`/api/comments/${commentId}`, {
-      method: 'DELETE',
-      headers: { 'Authorization': `Bearer ${token}` }
-    });
+    try {
+      const res = await fetch(`/api/comments/${commentId}`, {
+        method: 'DELETE',
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (!res.ok) throw new Error('Failed to delete comment');
+    } catch (err) {
+      console.error("Delete comment error:", err);
+    }
   };
 
   if (loading) return <div className="min-h-screen flex items-center justify-center"><div className="w-12 h-12 border-4 border-rose-500 border-t-transparent rounded-full animate-spin"></div></div>;
-  if (!manhwa) return <div className="text-center py-20">Manhwa not found</div>;
+  if (!manhwa) return (
+    <div className="min-h-screen bg-primary flex flex-col items-center justify-center p-6 text-center space-y-6">
+      <div className="w-24 h-24 bg-secondary rounded-[2rem] flex items-center justify-center text-text-secondary/20">
+        <BookOpen size={48} />
+      </div>
+      <div className="space-y-2">
+        <h2 className="text-4xl font-black font-display tracking-tight">Manhwa Not Found</h2>
+        <p className="text-text-secondary font-medium opacity-60 max-w-xs mx-auto">
+          The series you're looking for might have been moved or deleted.
+        </p>
+      </div>
+      <Link 
+        to="/" 
+        className="bg-accent hover:bg-accent/90 text-white px-10 py-4 rounded-2xl font-bold transition-all shadow-xl shadow-accent/20 active:scale-95"
+      >
+        Go Back Home
+      </Link>
+    </div>
+  );
 
   return (
     <div className="min-h-screen bg-primary">

@@ -3,7 +3,7 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { motion } from 'motion/react';
 import { 
   ChevronLeft, ChevronRight, Settings, 
-  Menu, Info, Lock, ArrowLeft
+  Menu, Info, Lock, ArrowLeft, FileText
 } from 'lucide-react';
 import { useAuth } from '../AuthContext';
 import { Chapter, Page } from '../types';
@@ -16,7 +16,7 @@ export default function Reader() {
   const [loading, setLoading] = useState(true);
   const [showControls, setShowControls] = useState(true);
   const [isFocused, setIsFocused] = useState(true);
-  const [purchasedChapters, setPurchasedChapters] = useState<number[]>([]);
+  const [purchasedChapters, setPurchasedChapters] = useState<string[]>([]);
   const [purchasing, setPurchasing] = useState(false);
 
   useEffect(() => {
@@ -52,6 +52,7 @@ export default function Reader() {
           token ? fetch('/api/user/purchases', { headers: { 'Authorization': `Bearer ${token}` } }) : Promise.resolve(null)
         ]);
 
+        if (!chapterRes.ok) throw new Error('Chapter not found');
         const chapterData = await chapterRes.json();
         setChapter(chapterData);
 
@@ -93,7 +94,7 @@ export default function Reader() {
       });
       const data = await res.json();
       if (res.ok) {
-        setPurchasedChapters([...purchasedChapters, Number(chapterId)]);
+        setPurchasedChapters([...purchasedChapters, chapterId]);
         refreshUser();
       } else {
         alert(data.error || 'Purchase failed');
@@ -107,7 +108,27 @@ export default function Reader() {
 
   if (loading) return <div className="min-h-screen bg-black flex items-center justify-center"><div className="w-12 h-12 border-4 border-rose-500 border-t-transparent rounded-full animate-spin"></div></div>;
   
-  const isPurchased = chapter && (chapter.coin_price === 0 || purchasedChapters.includes(Number(chapterId)));
+  if (!chapter) return (
+    <div className="min-h-screen bg-primary flex flex-col items-center justify-center p-6 text-center space-y-6">
+      <div className="w-24 h-24 bg-secondary rounded-[2rem] flex items-center justify-center text-text-secondary/20">
+        <FileText size={48} />
+      </div>
+      <div className="space-y-2">
+        <h2 className="text-4xl font-black font-display tracking-tight">Chapter Not Found</h2>
+        <p className="text-text-secondary font-medium opacity-60 max-w-xs mx-auto">
+          The chapter you're looking for might have been moved or deleted.
+        </p>
+      </div>
+      <Link 
+        to="/" 
+        className="bg-accent hover:bg-accent/90 text-white px-10 py-4 rounded-2xl font-bold transition-all shadow-xl shadow-accent/20 active:scale-95"
+      >
+        Go Back Home
+      </Link>
+    </div>
+  );
+
+  const isPurchased = chapter && (chapter.coin_price === 0 || purchasedChapters.includes(chapterId));
 
   if (!isPurchased) {
     return (

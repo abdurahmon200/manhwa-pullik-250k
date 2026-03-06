@@ -13,9 +13,7 @@ import Reader from './pages/Reader';
 import AdminDashboard from './pages/AdminDashboard';
 import ProfilePage from './pages/ProfilePage';
 import AuthModal from './components/AuthModal';
-import { io } from 'socket.io-client';
-
-const socket = io();
+import socket from './socket';
 
 export default function App() {
   const { user, logout } = useAuth();
@@ -165,7 +163,7 @@ export default function App() {
           <Route path="/manhwa/:id" element={<ManhwaDetail />} />
           <Route path="/reader/:chapterId" element={<Reader />} />
           <Route path="/profile" element={<ProfilePage />} />
-          {user?.role === 'admin' && <Route path="/admin/*" element={<AdminDashboard />} />}
+          {(user?.role === 'admin' || user?.role === 'assistant_admin') && <Route path="/admin/*" element={<AdminDashboard />} />}
         </Routes>
       </main>
 

@@ -1,5 +1,5 @@
 export interface User {
-  id: number;
+  id: string;
   username: string;
   email: string;
   role: 'user' | 'admin' | 'assistant_admin';
@@ -7,7 +7,7 @@ export interface User {
 }
 
 export interface Manhwa {
-  id: number;
+  id: string;
   title: string;
   description: string;
   poster: string;
@@ -17,8 +17,8 @@ export interface Manhwa {
 }
 
 export interface Chapter {
-  id: number;
-  manga_id: number;
+  id: string;
+  manga_id: string;
   chapter_number: number;
   title: string;
   coin_price: number;
@@ -26,17 +26,33 @@ export interface Chapter {
 }
 
 export interface Page {
-  id: number;
-  chapter_id: number;
+  id: string;
+  chapter_id: string;
   image_url: string;
   page_number: number;
 }
 
 export interface Comment {
-  id: number;
-  user_id: number;
+  id: string;
+  user_id: string;
   username: string;
-  manga_id: number;
+  manga_id: string;
   comment: string;
+  created_at: string;
+}
+
+export interface Purchase {
+  id: string;
+  user_id: string;
+  chapter_id: string;
+  purchase_time: string;
+}
+
+export interface CoinTransaction {
+  id: string;
+  user_id: string;
+  amount: number;
+  type: 'add' | 'spend' | 'reward';
+  description: string;
   created_at: string;
 }

@@ -3,22 +3,31 @@ import { Routes, Route, Link, useNavigate, useParams } from 'react-router-dom';
 import { 
   Plus, LayoutDashboard, BookOpen, Users, 
   MessageSquare, Settings, Upload, Trash2, 
-  Edit, ChevronRight, FileText, Lock, Globe, Info
+  Edit, ChevronRight, FileText, Lock, Globe, Info,
+  Search, Coins, History, ArrowUpRight, ArrowDownRight, Gift,
+  Star, Bookmark
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { useAuth } from '../AuthContext';
 import { Manhwa } from '../types';
 
 export default function AdminDashboard() {
-  const { token } = useAuth();
+  const { user, token } = useAuth();
   const [manhwas, setManhwas] = useState<Manhwa[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     fetch('/api/manhwa')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch manhwas');
+        return res.json();
+      })
       .then(data => {
         setManhwas(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
         setLoading(false);
       });
   }, []);
@@ -34,17 +43,21 @@ export default function AdminDashboard() {
           <Link to="/admin/manhwa/new" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
             <Plus size={20} /> Add Manhwa
           </Link>
-          <Link to="/admin/users" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
-            <Users size={20} /> Manage Users
-          </Link>
+          {user?.role === 'admin' && (
+            <>
+              <Link to="/admin/users" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
+                <Users size={20} /> Manage Users
+              </Link>
+              <Link to="/admin/transactions" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
+                <History size={20} /> Coin History
+              </Link>
+              <Link to="/admin/hero" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
+                <Globe size={20} /> Hero Banner
+              </Link>
+            </>
+          )}
           <Link to="/admin/comments" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
             <MessageSquare size={20} /> Comments
-          </Link>
-          <Link to="/admin/hero" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
-            <Globe size={20} /> Hero Banner
-          </Link>
-          <Link to="/admin/users" className="flex items-center gap-4 px-6 py-4 bg-secondary border border-white/5 text-text-secondary hover:text-white hover:border-white/10 rounded-2xl font-bold transition-all">
-            <Users size={20} /> Manage Users
           </Link>
         </div>
 
@@ -53,15 +66,24 @@ export default function AdminDashboard() {
           <Routes>
             <Route path="/" element={<AdminHome manhwas={manhwas} fetchManhwas={() => {
               fetch('/api/manhwa')
-                .then(res => res.json())
-                .then(data => setManhwas(data));
+                .then(res => {
+                  if (!res.ok) throw new Error('Failed to fetch manhwas');
+                  return res.json();
+                })
+                .then(data => setManhwas(data))
+                .catch(err => console.error(err));
             }} />} />
             <Route path="/manhwa/new" element={<AddManhwa />} />
             <Route path="/manhwa/:id/edit" element={<EditManhwa />} />
             <Route path="/manhwa/:id/chapters" element={<ManageChapters />} />
             <Route path="/manhwa/:id/chapters/new" element={<AddChapter />} />
-            <Route path="/hero" element={<ManageHero />} />
-            <Route path="/users" element={<ManageUsers />} />
+            {user?.role === 'admin' && (
+              <>
+                <Route path="/hero" element={<ManageHero />} />
+                <Route path="/users" element={<ManageUsers />} />
+                <Route path="/transactions" element={<CoinTransactions />} />
+              </>
+            )}
           </Routes>
         </div>
       </div>
@@ -71,37 +93,38 @@ export default function AdminDashboard() {
 
 function ManageUsers() {
   const { token } = useAuth();
-  const [searchId, setSearchId] = useState('');
+  const [search, setSearch] = useState('');
+  const [users, setUsers] = useState<any[]>([]);
   const [foundUser, setFoundUser] = useState<any>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [coinAmount, setCoinAmount] = useState(0);
+  const [coinDesc, setCoinDesc] = useState('');
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!searchId) return;
     setLoading(true);
     setError('');
-    setFoundUser(null);
     try {
-      const res = await fetch(`/api/users/search/${searchId}`, {
+      const res = await fetch(`/api/admin/users?search=${search}`, {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
         const data = await res.json();
-        setFoundUser(data);
+        setUsers(data);
+        if (data.length === 0) setError('No users found');
       } else {
-        setError('User not found');
+        setError('Error searching users');
       }
     } catch (err) {
-      setError('Error searching user');
+      setError('Error searching users');
     } finally {
       setLoading(false);
     }
   };
 
-  const updateRole = async (role: string) => {
-    if (!foundUser) return;
-    const res = await fetch(`/api/users/${foundUser.id}/role`, {
+  const updateRole = async (userId: string, role: string) => {
+    const res = await fetch(`/api/users/${userId}/role`, {
       method: 'PATCH',
       headers: { 
         'Authorization': `Bearer ${token}`,
@@ -109,89 +132,215 @@ function ManageUsers() {
       },
       body: JSON.stringify({ role })
     });
-    if (res.ok) setFoundUser({ ...foundUser, role });
+    if (res.ok) {
+      setUsers(users.map(u => u.id === userId ? { ...u, role } : u));
+      if (foundUser?.id === userId) setFoundUser({ ...foundUser, role });
+    }
   };
 
-  const updateCoins = async (coins: number) => {
-    if (!foundUser) return;
-    const res = await fetch(`/api/users/${foundUser.id}/coins`, {
+  const adjustCoins = async (userId: string, amount: number) => {
+    const res = await fetch(`/api/users/${userId}/coins`, {
       method: 'PATCH',
       headers: { 
         'Authorization': `Bearer ${token}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ coins })
+      body: JSON.stringify({ 
+        amount, 
+        type: amount > 0 ? 'add' : 'spend',
+        description: coinDesc || (amount > 0 ? 'Admin bonus' : 'Admin deduction')
+      })
     });
-    if (res.ok) setFoundUser({ ...foundUser, coins });
+    if (res.ok) {
+      const data = await res.json();
+      setUsers(users.map(u => u.id === userId ? { ...u, coins: data.coins } : u));
+      if (foundUser?.id === userId) setFoundUser({ ...foundUser, coins: data.coins });
+      setCoinAmount(0);
+      setCoinDesc('');
+    }
   };
 
   return (
     <div className="space-y-8">
       <div className="bg-secondary p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
-        <h2 className="text-2xl font-bold mb-6 font-display">Find User by ID</h2>
+        <h2 className="text-2xl font-bold mb-6 font-display">User Management</h2>
         <form onSubmit={handleSearch} className="flex gap-4">
-          <input 
-            type="number" 
-            placeholder="Enter User ID"
-            value={searchId}
-            onChange={(e) => setSearchId(e.target.value)}
-            className="flex-1 bg-primary border border-white/5 rounded-2xl px-6 py-4 outline-none focus:ring-2 focus:ring-accent/30"
-          />
+          <div className="relative flex-1">
+            <Search className="absolute left-6 top-1/2 -translate-y-1/2 text-text-secondary/40" size={20} />
+            <input 
+              type="text" 
+              placeholder="Search by ID, Username or Email"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="w-full bg-primary border border-white/5 rounded-2xl pl-16 pr-6 py-4 outline-none focus:ring-2 focus:ring-accent/30"
+            />
+          </div>
           <button className="bg-accent text-white px-8 py-4 rounded-2xl font-bold">Search</button>
         </form>
         {error && <p className="mt-4 text-accent font-bold">{error}</p>}
       </div>
 
-      {foundUser && (
-        <motion.div 
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="bg-secondary p-10 rounded-[2.5rem] border border-white/5 shadow-2xl space-y-8"
-        >
-          <div className="flex items-center justify-between">
-            <div>
-              <h3 className="text-xl font-bold">{foundUser.username}</h3>
-              <p className="text-text-secondary text-sm">{foundUser.email}</p>
-            </div>
-            <div className="text-right">
-              <span className="text-[10px] font-black text-text-secondary/40 uppercase tracking-widest">User ID</span>
-              <p className="text-lg font-bold">#{foundUser.id}</p>
-            </div>
-          </div>
+      <div className="grid grid-cols-1 gap-6">
+        {users.map(u => (
+          <motion.div 
+            key={u.id}
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-secondary p-8 rounded-[2.5rem] border border-white/5 shadow-2xl"
+          >
+            <div className="flex flex-col md:flex-row gap-8">
+              <div className="flex-grow space-y-4">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <h3 className="text-xl font-bold flex items-center gap-2">
+                      {u.username}
+                      <span className={`text-[10px] px-2 py-1 rounded-lg ${
+                        u.role === 'admin' ? 'bg-accent/20 text-accent' : 
+                        u.role === 'assistant_admin' ? 'bg-blue-500/20 text-blue-400' : 
+                        'bg-white/5 text-text-secondary'
+                      }`}>
+                        {u.role.toUpperCase()}
+                      </span>
+                    </h3>
+                    <p className="text-text-secondary text-sm">{u.email}</p>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] font-black text-text-secondary/40 uppercase tracking-widest">User ID</span>
+                    <p className="text-lg font-bold">#{u.id}</p>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div className="p-4 bg-primary rounded-2xl">
+                    <p className="text-text-secondary/40 text-[10px] uppercase font-black mb-1">Coins Balance</p>
+                    <p className="text-xl font-bold flex items-center gap-2 text-yellow-500">
+                      <Coins size={18} /> {u.coins}
+                    </p>
+                  </div>
+                  <div className="p-4 bg-primary rounded-2xl">
+                    <p className="text-text-secondary/40 text-[10px] uppercase font-black mb-1">Joined Date</p>
+                    <p className="font-bold">{new Date(u.created_at).toLocaleDateString()}</p>
+                  </div>
+                </div>
+              </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            <div className="space-y-4">
-              <label className="block text-[10px] font-black text-text-secondary uppercase tracking-widest opacity-60">Manage Role</label>
-              <div className="flex flex-wrap gap-2">
-                {['user', 'assistant_admin', 'admin'].map(role => (
-                  <button 
-                    key={role}
-                    onClick={() => updateRole(role)}
-                    className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
-                      foundUser.role === role ? 'bg-accent text-white' : 'bg-primary text-text-secondary'
-                    }`}
-                  >
-                    {role.replace('_', ' ').toUpperCase()}
-                  </button>
-                ))}
+              <div className="w-full md:w-80 space-y-6">
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-text-secondary uppercase tracking-widest opacity-60">Change Role</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {['user', 'assistant_admin', 'admin'].map(role => (
+                      <button 
+                        key={role}
+                        onClick={() => updateRole(u.id, role)}
+                        className={`px-2 py-2 rounded-xl text-[10px] font-bold transition-all ${
+                          u.role === role ? 'bg-accent text-white' : 'bg-primary text-text-secondary'
+                        }`}
+                      >
+                        {role.split('_')[0].toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-[10px] font-black text-text-secondary uppercase tracking-widest opacity-60">Adjust Coins</label>
+                  <div className="space-y-2">
+                    <div className="flex gap-2">
+                      <input 
+                        type="number" 
+                        placeholder="Amount"
+                        className="w-full bg-primary border border-white/5 rounded-xl px-4 py-2 text-sm outline-none"
+                        onChange={(e) => setCoinAmount(Number(e.target.value))}
+                      />
+                      <button 
+                        onClick={() => adjustCoins(u.id, coinAmount)}
+                        className="bg-accent text-white px-4 py-2 rounded-xl text-xs font-bold"
+                      >
+                        Apply
+                      </button>
+                    </div>
+                    <input 
+                      type="text" 
+                      placeholder="Reason (optional)"
+                      className="w-full bg-primary border border-white/5 rounded-xl px-4 py-2 text-[10px] outline-none"
+                      onChange={(e) => setCoinDesc(e.target.value)}
+                    />
+                  </div>
+                </div>
               </div>
             </div>
+          </motion.div>
+        ))}
+      </div>
+    </div>
+  );
+}
 
-            <div className="space-y-4">
-              <label className="block text-[10px] font-black text-text-secondary uppercase tracking-widest opacity-60">Manage Coins (Tanga)</label>
-              <div className="flex items-center gap-4">
-                <input 
-                  type="number" 
-                  value={foundUser.coins}
-                  onChange={(e) => updateCoins(Number(e.target.value))}
-                  className="w-32 bg-primary border border-white/5 rounded-xl px-4 py-2 outline-none"
-                />
-                <span className="text-text-secondary text-sm font-bold">Coins</span>
-              </div>
-            </div>
-          </div>
-        </motion.div>
-      )}
+function CoinTransactions() {
+  const { token } = useAuth();
+  const [transactions, setTransactions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetch('/api/admin/transactions', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch transactions');
+        return res.json();
+      })
+      .then(data => {
+        setTransactions(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
+        setLoading(false);
+      });
+  }, []);
+
+  return (
+    <div className="space-y-8">
+      <div className="flex items-center justify-between">
+        <h2 className="text-3xl font-bold tracking-tight font-display">Coin Transaction History</h2>
+      </div>
+
+      <div className="bg-secondary rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr className="text-left text-text-secondary text-[10px] font-black uppercase tracking-widest border-b border-white/5">
+                <th className="px-10 py-6">User</th>
+                <th className="px-10 py-6">Type</th>
+                <th className="px-10 py-6">Amount</th>
+                <th className="px-10 py-6">Description</th>
+                <th className="px-10 py-6">Date</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-white/5">
+              {transactions.map(t => (
+                <tr key={t.id} className="hover:bg-white/5 transition-colors">
+                  <td className="px-10 py-6 font-bold">{t.username}</td>
+                  <td className="px-10 py-6">
+                    <span className={`px-3 py-1 rounded-lg text-[10px] font-black uppercase ${
+                      t.type === 'add' ? 'bg-green-500/20 text-green-400' : 
+                      t.type === 'reward' ? 'bg-yellow-500/20 text-yellow-400' : 
+                      'bg-accent/20 text-accent'
+                    }`}>
+                      {t.type}
+                    </span>
+                  </td>
+                  <td className={`px-10 py-6 font-black ${t.amount > 0 ? 'text-green-400' : 'text-accent'}`}>
+                    {t.amount > 0 ? '+' : ''}{t.amount}
+                  </td>
+                  <td className="px-10 py-6 text-text-secondary text-sm">{t.description}</td>
+                  <td className="px-10 py-6 text-text-secondary text-xs">{new Date(t.created_at).toLocaleString()}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
     </div>
   );
 }
@@ -210,7 +359,10 @@ function ManageHero() {
 
   useEffect(() => {
     fetch('/api/settings/hero_banner')
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch hero banner');
+        return res.json();
+      })
       .then(data => {
         setFormData({
           title: data.title,
@@ -219,6 +371,10 @@ function ManageHero() {
           link: data.link,
           image: null
         });
+        setFetching(false);
+      })
+      .catch(err => {
+        console.error(err);
         setFetching(false);
       });
   }, []);
@@ -329,8 +485,21 @@ function ManageHero() {
 
 function AdminHome({ manhwas, fetchManhwas }: { manhwas: Manhwa[], fetchManhwas: () => void }) {
   const { token } = useAuth();
+  const [stats, setStats] = useState<any>(null);
   
-  const deleteManhwa = async (id: number) => {
+  useEffect(() => {
+    fetch('/api/admin/stats', {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch stats');
+        return res.json();
+      })
+      .then(data => setStats(data))
+      .catch(err => console.error(err));
+  }, []);
+
+  const deleteManhwa = async (id: string) => {
     if (!confirm('Are you sure you want to delete this manhwa? This will delete all chapters and pages!')) return;
     const res = await fetch(`/api/manhwa/${id}`, {
       method: 'DELETE',
@@ -339,13 +508,16 @@ function AdminHome({ manhwas, fetchManhwas }: { manhwas: Manhwa[], fetchManhwas:
     if (res.ok) fetchManhwas();
   };
 
+  if (!stats) return <div className="text-text-secondary">Loading statistics...</div>;
+
   return (
     <div className="space-y-12">
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-8">
         {[
-          { label: 'Total Manhwa', value: manhwas.length, icon: BookOpen },
-          { label: 'Total Chapters', value: '1,248', icon: FileText },
-          { label: 'Active Users', value: '452', icon: Users },
+          { label: 'Total Users', value: stats.totalUsers, icon: Users },
+          { label: 'Total Manhwa', value: stats.totalManhwa, icon: BookOpen },
+          { label: 'Total Chapters', value: stats.totalChapters, icon: FileText },
+          { label: 'Transactions', value: stats.totalTransactions, icon: Coins },
         ].map((stat) => (
           <div key={stat.label} className="bg-secondary p-8 rounded-[2.5rem] border border-white/5 shadow-xl">
             <div className="flex items-center justify-between mb-4">
@@ -357,6 +529,40 @@ function AdminHome({ manhwas, fetchManhwas }: { manhwas: Manhwa[], fetchManhwas:
             <div className="text-4xl font-black font-display tracking-tighter">{stat.value}</div>
           </div>
         ))}
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        <div className="bg-secondary p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
+          <h3 className="text-xl font-bold mb-6 font-display flex items-center gap-2">
+            <Star className="text-yellow-500" size={20} /> Popular Manhwa
+          </h3>
+          <div className="space-y-4">
+            {stats.popularManhwa.map((m: any) => (
+              <div key={m.id} className="flex items-center justify-between p-4 bg-primary rounded-2xl">
+                <span className="font-bold">{m.title}</span>
+                <span className="text-xs text-text-secondary font-bold flex items-center gap-1">
+                  <Bookmark size={12} /> {m.bookmark_count}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="bg-secondary p-10 rounded-[2.5rem] border border-white/5 shadow-2xl">
+          <h3 className="text-xl font-bold mb-6 font-display flex items-center gap-2">
+            <Users className="text-blue-400" size={20} /> New Users
+          </h3>
+          <div className="space-y-4">
+            {stats.latestUsers.map((u: any) => (
+              <div key={u.id} className="flex items-center justify-between p-4 bg-primary rounded-2xl">
+                <span className="font-bold">{u.username}</span>
+                <span className="text-[10px] text-text-secondary font-medium">
+                  {new Date(u.created_at).toLocaleDateString()}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="bg-secondary rounded-[2.5rem] border border-white/5 overflow-hidden shadow-2xl">
@@ -426,9 +632,16 @@ function ManageChapters() {
 
   const fetchManhwa = () => {
     fetch(`/api/manhwa/${id}`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch manhwa');
+        return res.json();
+      })
       .then(data => {
         setManhwa(data);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error(err);
         setLoading(false);
       });
   };
@@ -437,7 +650,7 @@ function ManageChapters() {
     fetchManhwa();
   }, [id]);
 
-  const updatePrice = async (chapterId: number, coin_price: number) => {
+  const updatePrice = async (chapterId: string, coin_price: number) => {
     const res = await fetch(`/api/chapters/${chapterId}/price`, {
       method: 'PATCH',
       headers: { 
@@ -449,7 +662,7 @@ function ManageChapters() {
     if (res.ok) fetchManhwa();
   };
 
-  const deleteChapter = async (chapterId: number) => {
+  const deleteChapter = async (chapterId: string) => {
     if (!confirm('Are you sure you want to delete this chapter?')) return;
     const res = await fetch(`/api/chapters/${chapterId}`, {
       method: 'DELETE',
@@ -534,7 +747,10 @@ function EditManhwa() {
 
   useEffect(() => {
     fetch(`/api/manhwa/${id}`)
-      .then(res => res.json())
+      .then(res => {
+        if (!res.ok) throw new Error('Failed to fetch manhwa');
+        return res.json();
+      })
       .then(data => {
         setFormData({
           title: data.title,
@@ -542,6 +758,10 @@ function EditManhwa() {
           genres: data.genres.join(', '),
           poster: null
         });
+        setFetching(false);
+      })
+      .catch(err => {
+        console.error(err);
         setFetching(false);
       });
   }, [id]);
