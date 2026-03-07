@@ -23,8 +23,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (savedToken && savedUser) {
       setToken(savedToken);
       setUser(JSON.parse(savedUser));
+      // Refresh user data from server on load to ensure role/coins are up to date
+      fetch('/api/auth/me', {
+        headers: { 'Authorization': `Bearer ${savedToken}` }
+      })
+      .then(res => res.ok ? res.json() : Promise.reject())
+      .then(data => {
+        setUser(data);
+        localStorage.setItem('user', JSON.stringify(data));
+      })
+      .catch(() => {
+        // If token is invalid, logout
+        logout();
+      })
+      .finally(() => setIsLoading(false));
+    } else {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   }, []);
 
   const login = (newToken: string, newUser: User) => {
@@ -44,19 +59,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const refreshUser = async () => {
     if (!token) return;
     try {
-      const res = await fetch('/api/user/coins', {
+      const res = await fetch('/api/auth/me', {
         headers: { 'Authorization': `Bearer ${token}` }
       });
       if (res.ok) {
-        const { coins } = await res.json();
-        if (user) {
-          const updatedUser = { ...user, coins };
-          setUser(updatedUser);
-          localStorage.setItem('user', JSON.stringify(updatedUser));
-        }
+        const data = await res.json();
+        setUser(data);
+        localStorage.setItem('user', JSON.stringify(data));
       }
     } catch (err) {
-      console.error("Failed to refresh user:", err);
+      // Silently fail
     }
   };
 

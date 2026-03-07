@@ -61,7 +61,7 @@ export default function Reader() {
           setPurchasedChapters(purchasesData);
         }
       } catch (err) {
-        console.error(err);
+        // Silently fail or handle UI-side
       } finally {
         setLoading(false);
       }

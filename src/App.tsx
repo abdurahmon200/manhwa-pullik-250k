@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Routes, Route, Link, useNavigate, useLocation } from 'react-router-dom';
+import { Routes, Route, Link, useNavigate, useLocation, Navigate } from 'react-router-dom';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   Search, User, LogOut, Menu, X, Home, 
@@ -16,16 +16,22 @@ import AuthModal from './components/AuthModal';
 import socket from './socket';
 
 export default function App() {
-  const { user, logout } = useAuth();
+  const { user, logout, isLoading } = useAuth();
   const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const navigate = useNavigate();
   const location = useLocation();
 
+  const [isSupabaseConfigured, setIsSupabaseConfigured] = useState(true);
+
   useEffect(() => {
+    fetch('/api/health')
+      .then(res => res.json())
+      .then(data => setIsSupabaseConfigured(data.supabaseConfigured))
+      .catch(() => {});
+
     socket.on('update', (data) => {
-      console.log('Real-time update:', data);
       // We could show a toast here
     });
     return () => { socket.off('update'); };
@@ -38,8 +44,23 @@ export default function App() {
     }
   };
 
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-primary flex items-center justify-center">
+        <div className="w-12 h-12 border-4 border-accent/20 border-t-accent rounded-full animate-spin" />
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen flex flex-col bg-primary text-text-primary selection:bg-accent selection:text-white">
+      {!isSupabaseConfigured && (
+        <div className="bg-amber-500/10 border-b border-amber-500/20 py-2 px-4 text-center">
+          <p className="text-amber-500 text-[10px] font-bold uppercase tracking-widest flex items-center justify-center gap-2">
+            <Shield size={12} /> Mock Mode: Supabase not configured. Please set SUPABASE_URL and SUPABASE_ANON_KEY in environment variables.
+          </p>
+        </div>
+      )}
       {/* Navigation */}
       <nav className="sticky top-0 z-50 bg-primary/80 backdrop-blur-md border-b border-white/5">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -163,7 +184,11 @@ export default function App() {
           <Route path="/manhwa/:id" element={<ManhwaDetail />} />
           <Route path="/reader/:chapterId" element={<Reader />} />
           <Route path="/profile" element={<ProfilePage />} />
-          {(user?.role === 'admin' || user?.role === 'assistant_admin') && <Route path="/admin/*" element={<AdminDashboard />} />}
+          <Route path="/admin/*" element={
+            (user?.role === 'admin' || user?.role === 'assistant_admin') 
+              ? <AdminDashboard /> 
+              : <Navigate to="/" replace />
+          } />
         </Routes>
       </main>
 

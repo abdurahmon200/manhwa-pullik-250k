@@ -26,7 +26,7 @@ export default function HomePage() {
         setManhwas(data);
       })
       .catch(err => {
-        console.error("Fetch error:", err.message);
+        // Silently fail or handle UI-side
       });
 
     fetch('/api/settings/hero_banner')
@@ -41,7 +41,6 @@ export default function HomePage() {
         setHero(data);
       })
       .catch(err => {
-        console.warn("Hero banner fetch failed, using fallback:", err.message);
         // Fallback hero banner
         setHero({
           title: "Welcome to Manhwa World",
@@ -62,7 +61,7 @@ export default function HomePage() {
         setLoading(false);
       })
       .catch(err => {
-        console.error(err);
+        // Silently fail or handle UI-side
         setLoading(false);
       });
 

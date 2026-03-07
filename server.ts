@@ -1,4 +1,3 @@
-console.log("Server script starting...");
 import express from "express";
 import { createServer } from "http";
 import { Server } from "socket.io";
@@ -14,30 +13,138 @@ import dotenv from "dotenv";
 dotenv.config();
 
 // --- Supabase Setup ---
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseAnonKey = process.env.SUPABASE_ANON_KEY;
+const supabaseUrl = (process.env.SUPABASE_URL || "").trim();
+const supabaseAnonKey = (process.env.SUPABASE_ANON_KEY || "").trim();
 
-if (!supabaseUrl || !supabaseAnonKey) {
-  console.error("CRITICAL: Supabase URL or Anon Key is missing. Please set SUPABASE_URL and SUPABASE_ANON_KEY in your environment variables.");
-  console.log("You can find these in your Supabase Project Settings -> API.");
+const isValidUrl = (url: string) => {
+  try {
+    new URL(url);
+    return url.startsWith('http') && !url.includes('placeholder-project');
+  } catch {
+    return false;
+  }
+};
+
+const isSupabaseConfigured = isValidUrl(supabaseUrl) && supabaseAnonKey && supabaseAnonKey !== "placeholder-key";
+
+const supabase = createClient(
+  isSupabaseConfigured ? supabaseUrl : "https://placeholder-project.supabase.co",
+  isSupabaseConfigured ? supabaseAnonKey : "placeholder-key"
+);
+
+// Mock Data for fallback when Supabase is not configured
+const mockManhwas = [
+  {
+    id: "1",
+    title: "Solo Leveling: Ragnarok",
+    description: "The legend continues. Sung Jin-woo's son, Sung Su-ho, awakens his powers in a world where the gates have reopened. As a new threat emerges, Su-ho must follow in his father's footsteps to become the ultimate hunter.",
+    poster: "https://picsum.photos/seed/manhwa-1/800/1200",
+    genres: "Action,Adventure,Fantasy",
+    created_at: new Date().toISOString(),
+    latest_chapters: [
+      { id: "c1", chapter_number: 1, title: "The Awakening", coin_price: 0, created_at: new Date().toISOString() }
+    ]
+  },
+  {
+    id: "2",
+    title: "The Beginning After The End",
+    description: "King Grey has unrivaled strength, wealth, and prestige in a world governed by martial ability. However, solitude lingers closely behind those with great power. Beneath the glamorous exterior of a powerful king lurks the shell of man, devoid of purpose and will.",
+    poster: "https://picsum.photos/seed/manhwa-2/800/1200",
+    genres: "Isekai,Magic,Fantasy",
+    created_at: new Date().toISOString(),
+    latest_chapters: [
+      { id: "c2", chapter_number: 1, title: "Rebirth", coin_price: 0, created_at: new Date().toISOString() }
+    ]
+  }
+];
+
+const mockHero = {
+  title: "Solo Leveling: Ragnarok",
+  description: "The legend continues. Sung Jin-woo's son, Sung Su-ho, awakens his powers in a world where the gates have reopened...",
+  image: "https://picsum.photos/seed/manhwa-hero/1920/1080",
+  button_text: "Read Now",
+  link: "/manhwa/1"
+};
+
+// Helper to upload to Supabase Storage
+async function uploadToSupabase(bucket: string, filePath: string, buffer: Buffer, contentType: string) {
+  const { data, error } = await supabase.storage
+    .from(bucket)
+    .upload(filePath, buffer, {
+      contentType,
+      upsert: true
+    });
+
+  if (error) {
+    console.error(`Supabase Storage upload error (${bucket}/${filePath}):`, error);
+    throw error;
+  }
+
+  const { data: { publicUrl } } = supabase.storage
+    .from(bucket)
+    .getPublicUrl(filePath);
+
+  return publicUrl;
 }
 
-const supabase = createClient(supabaseUrl || "", supabaseAnonKey || "");
+// Helper to delete from Supabase Storage
+async function deleteFromSupabase(bucket: string, paths: string[]) {
+  if (paths.length === 0) return;
+  const { error } = await supabase.storage
+    .from(bucket)
+    .remove(paths);
 
-console.log("Supabase client initialized.");
+  if (error) {
+    console.error(`Supabase Storage deletion error (${bucket}):`, error);
+  }
+}
 
 // Initialize tables and seed data (Supabase handles tables, but we can seed if needed)
 async function initializeDatabase() {
-  console.log("Checking Supabase connection and tables...");
   try {
+    // Seed Admin
+    const adminEmail = "yt918859@gmail.com";
+    const adminPassword = "bro2009";
+    
+    const { data: existingAdmin, error: fetchError } = await supabase.from("users").select("*").eq("email", adminEmail).maybeSingle();
+    
+    if (fetchError) {
+      console.error("Error fetching existing admin:", fetchError);
+    }
+
+    const hashedPassword = bcrypt.hashSync(adminPassword, 10);
+    const testMatch = bcrypt.compareSync(adminPassword, hashedPassword);
+    
+    if (!existingAdmin) {
+      const { data: insertedAdmin, error: insertError } = await supabase.from("users").insert({
+        username: "Admin", 
+        email: adminEmail, 
+        password: hashedPassword, 
+        role: "admin",
+        coins: 999999
+      }).select().single();
+
+      if (insertError) {
+        console.error("Failed to seed admin user:", insertError.message, insertError);
+      }
+    } else {
+      // Always ensure the admin has the correct role and password for this specific email during dev
+      const { error: updateError } = await supabase.from("users").update({ 
+        role: "admin",
+        password: hashedPassword 
+      }).eq("email", adminEmail);
+      
+      if (updateError) {
+        console.error(`Failed to update admin user (${adminEmail}):`, updateError.message);
+      }
+    }
+
     // Basic connectivity check - check for 'settings' table
     const { data: testData, error: testError } = await supabase.from("settings").select("key").limit(1);
     if (testError) {
       console.error("Supabase connection check failed. Table 'settings' might not exist:", testError.message);
-      console.log("CRITICAL: Database tables are missing. Please run the SQL script in 'supabase_schema.sql' in your Supabase SQL Editor to create them.");
-      return;
+      // Don't return here, let it try other things if possible
     }
-    console.log("Supabase connection successful. 'settings' table found.");
 
     // Seed default settings if not exists
     const defaultHero = {
@@ -48,7 +155,7 @@ async function initializeDatabase() {
       link: "/manhwa/1"
     };
 
-    const { data: existingHero } = await supabase.from("settings").select("*").eq("key", "hero_banner").single();
+    const { data: existingHero } = await supabase.from("settings").select("*").eq("key", "hero_banner").maybeSingle();
     if (!existingHero) {
       await supabase.from("settings").insert({ key: "hero_banner", value: JSON.stringify(defaultHero) });
     }
@@ -68,7 +175,7 @@ async function initializeDatabase() {
         // Add genres
         const genres = ["Action", "Adventure", "Fantasy"];
         for (const genreName of genres) {
-          let { data: genre } = await supabase.from("genres").select("id").eq("name", genreName).single();
+          let { data: genre } = await supabase.from("genres").select("id").eq("name", genreName).maybeSingle();
           if (!genre) {
             const { data: newGenre } = await supabase.from("genres").insert({ name: genreName }).select().single();
             genre = newGenre;
@@ -95,29 +202,16 @@ async function initializeDatabase() {
           await supabase.from("pages").insert(pages);
         }
       }
-      console.log("Sample manhwa seeded successfully.");
-    }
-
-    // Seed Admin if not exists
-    const adminEmail = "yt918859@gmail.com";
-    const adminPassword = "bro2009";
-    const { data: existingAdmin } = await supabase.from("users").select("*").eq("email", adminEmail).single();
-    if (!existingAdmin) {
-      const hashedPassword = bcrypt.hashSync(adminPassword, 10);
-      await supabase.from("users").insert({
-        username: "Admin", email: adminEmail, password: hashedPassword, role: "admin"
-      });
     }
   } catch (err) {
     console.error("Database seeding failed:", err);
   }
 }
 
-initializeDatabase();
+// initializeDatabase(); // Now called inside startServer to ensure it's awaited
 
 // --- Express & Socket.io Setup ---
 async function startServer() {
-  console.log("Starting server...");
   const app = express();
   const httpServer = createServer(app);
   const io = new Server(httpServer);
@@ -125,22 +219,18 @@ async function startServer() {
   const JWT_SECRET = process.env.JWT_SECRET || "manga-secret-key";
 
   io.on("connection", (socket) => {
-    console.log(`New socket connection: ${socket.id}`);
     socket.on("disconnect", () => {
-      console.log(`Socket disconnected: ${socket.id}`);
     });
   });
 
   app.use(express.json());
-  app.use((req, res, next) => {
-    console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
-    next();
-  });
   app.use("/uploads", express.static("uploads"));
 
-  // Health check
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", time: new Date().toISOString() });
+  // Debug route (REMOVE IN PRODUCTION)
+  app.get("/api/debug/users", async (req, res) => {
+    if (!isSupabaseConfigured) return res.json([{ id: "mock-admin-id", username: "Admin (Mock)", email: "yt918859@gmail.com", role: "admin" }]);
+    const { data: users } = await supabase.from("users").select("id, username, email, role");
+    res.json(users);
   });
 
   // Ensure uploads directory exists
@@ -148,7 +238,6 @@ async function startServer() {
   dirs.forEach(dir => {
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
-      console.log(`Created directory: ${dir}`);
     }
   });
 
@@ -189,17 +278,56 @@ async function startServer() {
     });
   };
 
-  const isAdmin = (req: any, res: any, next: any) => {
-    if (req.user.role !== 'admin' && req.user.role !== 'assistant_admin') return res.sendStatus(403);
-    next();
+  const isAdmin = async (req: any, res: any, next: any) => {
+    if (!isSupabaseConfigured) {
+      // In mock mode, the mock admin has role 'admin'
+      if (req.user && req.user.role === 'admin') return next();
+      return res.sendStatus(403);
+    }
+    try {
+      const { data: user, error } = await supabase.from("users").select("role").eq("id", req.user.id).maybeSingle();
+      if (error || !user) return res.sendStatus(403);
+      if (user.role !== 'admin' && user.role !== 'assistant_admin') return res.sendStatus(403);
+      next();
+    } catch (err) {
+      res.sendStatus(500);
+    }
   };
 
-  const isSuperAdmin = (req: any, res: any, next: any) => {
-    if (req.user.role !== 'admin') return res.sendStatus(403);
-    next();
+  const isSuperAdmin = async (req: any, res: any, next: any) => {
+    if (!isSupabaseConfigured) {
+      if (req.user && req.user.role === 'admin') return next();
+      return res.sendStatus(403);
+    }
+    try {
+      const { data: user, error } = await supabase.from("users").select("role").eq("id", req.user.id).maybeSingle();
+      if (error || !user) return res.sendStatus(403);
+      if (user.role !== 'admin') return res.sendStatus(403);
+      next();
+    } catch (err) {
+      res.sendStatus(500);
+    }
   };
 
   // --- API Routes ---
+  
+  // Health check
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      time: new Date().toISOString(),
+      supabaseConfigured: isSupabaseConfigured
+    });
+  });
+
+  // Start initialization in background
+  if (isSupabaseConfigured) {
+    initializeDatabase().catch(err => {
+      console.error("Background database initialization failed:", err);
+    });
+  } else {
+    console.warn("Supabase not configured. Skipping database initialization.");
+  }
 
   // Improved Multer error handling for specific routes
   const handleUpload = (field: string) => (req: any, res: any, next: any) => {
@@ -219,32 +347,95 @@ async function startServer() {
   };
 
   // Auth
+  app.get("/api/auth/me", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) {
+      return res.json({
+        id: "mock-admin-id",
+        username: "Admin (Mock)",
+        email: "yt918859@gmail.com",
+        role: "admin",
+        coins: 999999
+      });
+    }
+    try {
+      const { data: user, error } = await supabase.from("users").select("id, username, email, role, coins").eq("id", req.user.id).maybeSingle();
+      if (error || !user) return res.status(404).json({ error: "User not found" });
+      res.json(user);
+    } catch (err) {
+      res.status(500).json({ error: "Internal server error" });
+    }
+  });
+
   app.post("/api/auth/register", async (req, res) => {
+    if (!isSupabaseConfigured) {
+      return res.status(503).json({ error: "Registration unavailable in mock mode. Please configure Supabase." });
+    }
     const { username, email, password } = req.body;
     try {
       const hashedPassword = bcrypt.hashSync(password, 10);
-      const { data, error } = await supabase.from("users").insert({ username, email, password: hashedPassword }).select().single();
+      const { data: user, error } = await supabase.from("users").insert({ username, email, password: hashedPassword }).select().single();
       if (error) throw error;
-      res.json({ id: data.id });
+      
+      const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, JWT_SECRET);
+      res.json({ 
+        token, 
+        user: { 
+          id: user.id, 
+          username: user.username, 
+          role: user.role, 
+          coins: user.coins 
+        } 
+      });
     } catch (e) {
+      console.error("Registration error:", e);
       res.status(400).json({ error: "User already exists or registration failed" });
     }
   });
 
   app.post("/api/auth/login", async (req, res) => {
     const { email, password } = req.body;
-    const { data: user, error } = await supabase.from("users").select("*").eq("email", email).single();
     
-    if (user && bcrypt.compareSync(password, user.password)) {
-      const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, JWT_SECRET);
-      res.json({ token, user: { id: user.id, username: user.username, role: user.role, coins: user.coins } });
-    } else {
-      res.status(401).json({ error: "Invalid credentials" });
+    if (!isSupabaseConfigured) {
+      // Allow login with the provided admin credentials in mock mode
+      if (email === "yt918859@gmail.com" && password === "bro2009") {
+        const token = jwt.sign({ id: "mock-admin-id", role: "admin", username: "Admin (Mock)" }, JWT_SECRET);
+        return res.json({ 
+          token, 
+          user: { id: "mock-admin-id", username: "Admin (Mock)", role: "admin", coins: 999999 } 
+        });
+      }
+      return res.status(401).json({ error: "Invalid credentials (Mock Mode: Use admin email/pass)" });
+    }
+    
+    try {
+      const { data: user, error } = await supabase.from("users").select("*").eq("email", email).maybeSingle();
+      
+      if (error) {
+        console.error(`Login error fetching user: ${error.message}`);
+        return res.status(500).json({ error: "Internal server error" });
+      }
+
+      if (!user) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+
+      const isPasswordMatch = bcrypt.compareSync(password, user.password);
+
+      if (isPasswordMatch) {
+        const token = jwt.sign({ id: user.id, role: user.role, username: user.username }, JWT_SECRET);
+        res.json({ token, user: { id: user.id, username: user.username, role: user.role, coins: user.coins } });
+      } else {
+        res.status(401).json({ error: "Invalid credentials" });
+      }
+    } catch (err: any) {
+      console.error("Login route exception:", err);
+      res.status(500).json({ error: "Internal server error" });
     }
   });
 
   // User Management (Super Admin only)
   app.get("/api/admin/users", authenticateToken, isSuperAdmin, async (req, res) => {
+    if (!isSupabaseConfigured) return res.json([{ id: "mock-admin-id", username: "Admin (Mock)", email: "yt918859@gmail.com", role: "admin", coins: 999999, created_at: new Date().toISOString() }]);
     const { search } = req.query;
     let query = supabase.from("users").select("id, username, email, role, coins, created_at");
     
@@ -258,6 +449,16 @@ async function startServer() {
   });
 
   app.get("/api/admin/stats", authenticateToken, isAdmin, async (req, res) => {
+    if (!isSupabaseConfigured) {
+      return res.json({
+        totalUsers: 1,
+        totalManhwa: mockManhwas.length,
+        totalChapters: 2,
+        totalTransactions: 0,
+        popularManhwa: mockManhwas.map(m => ({ id: m.id, title: m.title, bookmark_count: 0 })),
+        latestUsers: [{ id: "mock-admin-id", username: "Admin (Mock)", created_at: new Date().toISOString() }]
+      });
+    }
     const { count: totalUsers } = await supabase.from("users").select("*", { count: 'exact', head: true });
     const { count: totalManhwa } = await supabase.from("manhwa").select("*", { count: 'exact', head: true });
     const { count: totalChapters } = await supabase.from("chapters").select("*", { count: 'exact', head: true });
@@ -281,6 +482,7 @@ async function startServer() {
   });
 
   app.get("/api/admin/transactions", authenticateToken, isSuperAdmin, async (req, res) => {
+    if (!isSupabaseConfigured) return res.json([]);
     const { data: transactions, error } = await supabase
       .from("coin_transactions")
       .select("*, users(username)")
@@ -292,6 +494,7 @@ async function startServer() {
   });
 
   app.patch("/api/users/:id/role", authenticateToken, isSuperAdmin, async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const { role } = req.body;
     if (!['admin', 'assistant_admin', 'user'].includes(role)) return res.status(400).json({ error: "Invalid role" });
     const { error } = await supabase.from("users").update({ role }).eq("id", req.params.id);
@@ -301,12 +504,13 @@ async function startServer() {
   });
 
   app.patch("/api/users/:id/coins", authenticateToken, isSuperAdmin, async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const { amount, type, description } = req.body;
     const userId = req.params.id;
 
     try {
       // Fetch current coins
-      const { data: user } = await supabase.from("users").select("coins").eq("id", userId).single();
+      const { data: user } = await supabase.from("users").select("coins").eq("id", userId).maybeSingle();
       if (!user) throw new Error("User not found");
 
       const newCoins = (user.coins || 0) + amount;
@@ -328,7 +532,11 @@ async function startServer() {
 
   // Manhwa
   app.get("/api/manhwa", async (req, res) => {
-    console.log("GET /api/manhwa request received");
+    if (!isSupabaseConfigured) {
+      console.log("Supabase not configured, returning mock manhwas");
+      return res.json(mockManhwas);
+    }
+
     try {
       const { data: manhwas, error } = await supabase
         .from("manhwa")
@@ -339,7 +547,6 @@ async function startServer() {
         .order("created_at", { ascending: false });
 
       if (error) {
-        console.error("Supabase error fetching manhwa:", error);
         if (error.code === 'PGRST116' || error.message.includes('relation "manhwa" does not exist')) {
           return res.status(500).json({ 
             error: "Database tables missing", 
@@ -350,7 +557,6 @@ async function startServer() {
       }
 
       if (!manhwas) {
-        console.log("No manhwas found in database");
         return res.json([]);
       }
 
@@ -364,7 +570,7 @@ async function startServer() {
           .limit(2);
 
         if (chapterError) {
-          console.warn(`Error fetching chapters for manhwa ${m.id}:`, chapterError);
+          // Silently fail or handle UI-side
         }
 
         results.push({
@@ -385,7 +591,17 @@ async function startServer() {
   });
 
   app.get("/api/manhwa/:id", async (req, res) => {
-    const { data: manhwa, error } = await supabase.from("manhwa").select("*").eq("id", req.params.id).single();
+    if (!isSupabaseConfigured) {
+      const manhwa = mockManhwas.find(m => m.id === req.params.id);
+      if (!manhwa) return res.status(404).json({ error: "Manhwa not found" });
+      return res.json({
+        ...manhwa,
+        chapters: manhwa.latest_chapters,
+        genres: manhwa.genres.split(',')
+      });
+    }
+
+    const { data: manhwa, error } = await supabase.from("manhwa").select("*").eq("id", req.params.id).maybeSingle();
     if (error || !manhwa) return res.status(404).json({ error: "Manhwa not found" });
     
     const { data: chapters } = await supabase.from("chapters").select("*").eq("manga_id", req.params.id).order("chapter_number", { ascending: false });
@@ -402,8 +618,21 @@ async function startServer() {
   });
 
   app.post("/api/manhwa", authenticateToken, isAdmin, handleUpload("poster"), async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const { title, description, genres } = req.body;
-    const poster = req.file ? `/uploads/posters/${req.file.filename}` : null;
+    let poster = null;
+
+    if (req.file) {
+      try {
+        const fileBuffer = fs.readFileSync(req.file.path);
+        poster = await uploadToSupabase('posters', req.file.filename, fileBuffer, req.file.mimetype);
+        // Clean up local file
+        fs.unlinkSync(req.file.path);
+      } catch (err) {
+        console.error("Failed to upload poster to Supabase:", err);
+        return res.status(500).json({ error: "Failed to upload poster to storage" });
+      }
+    }
     
     const { data: manga, error } = await supabase.from("manhwa").insert({ title, description, poster }).select().single();
     if (error) return res.status(500).json({ error: error.message });
@@ -413,7 +642,7 @@ async function startServer() {
     if (genres) {
       const genreList = JSON.parse(genres);
       for (const genreName of genreList) {
-        let { data: genre } = await supabase.from("genres").select("id").eq("name", genreName).single();
+        let { data: genre } = await supabase.from("genres").select("id").eq("name", genreName).maybeSingle();
         if (!genre) {
           const { data: newGenre } = await supabase.from("genres").insert({ name: genreName }).select().single();
           genre = newGenre;
@@ -428,13 +657,25 @@ async function startServer() {
   });
 
   app.put("/api/manhwa/:id", authenticateToken, isAdmin, handleUpload("poster"), async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const { title, description, genres } = req.body;
     const mangaId = req.params.id;
     
-    const { data: currentManhwa } = await supabase.from("manhwa").select("*").eq("id", mangaId).single();
+    const { data: currentManhwa } = await supabase.from("manhwa").select("*").eq("id", mangaId).maybeSingle();
     if (!currentManhwa) return res.status(404).json({ error: "Manhwa not found" });
 
-    const poster = req.file ? `/uploads/posters/${req.file.filename}` : currentManhwa.poster;
+    let poster = currentManhwa.poster;
+    if (req.file) {
+      try {
+        const fileBuffer = fs.readFileSync(req.file.path);
+        poster = await uploadToSupabase('posters', req.file.filename, fileBuffer, req.file.mimetype);
+        // Clean up local file
+        fs.unlinkSync(req.file.path);
+      } catch (err) {
+        console.error("Failed to upload poster to Supabase:", err);
+        return res.status(500).json({ error: "Failed to upload poster to storage" });
+      }
+    }
 
     await supabase.from("manhwa").update({ title, description, poster }).eq("id", mangaId);
 
@@ -444,7 +685,7 @@ async function startServer() {
       await supabase.from("manhwa_genres").delete().eq("manga_id", mangaId);
       
       for (const genreName of genreList) {
-        let { data: genre } = await supabase.from("genres").select("id").eq("name", genreName).single();
+        let { data: genre } = await supabase.from("genres").select("id").eq("name", genreName).maybeSingle();
         if (!genre) {
           const { data: newGenre } = await supabase.from("genres").insert({ name: genreName }).select().single();
           genre = newGenre;
@@ -460,15 +701,22 @@ async function startServer() {
   });
 
   app.delete("/api/manhwa/:id", authenticateToken, isAdmin, async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const mangaId = req.params.id;
-    const { data: manhwa } = await supabase.from("manhwa").select("*").eq("id", mangaId).single();
+    const { data: manhwa } = await supabase.from("manhwa").select("*").eq("id", mangaId).maybeSingle();
     if (!manhwa) return res.status(404).json({ error: "Manhwa not found" });
 
-    // Delete poster file if exists
+    // Delete poster file if it's local
     if (manhwa.poster && manhwa.poster.startsWith('/uploads')) {
       const posterPath = path.join(__dirname, manhwa.poster);
       if (fs.existsSync(posterPath)) {
         try { fs.unlinkSync(posterPath); } catch (e) {}
+      }
+    } else if (manhwa.poster && manhwa.poster.includes(supabaseUrl || "")) {
+      // Delete from Supabase Storage
+      const posterFileName = manhwa.poster.split('/').pop();
+      if (posterFileName) {
+        await deleteFromSupabase('posters', [posterFileName]);
       }
     }
 
@@ -490,12 +738,18 @@ async function startServer() {
 
   // Settings
   app.get("/api/settings/:key", async (req, res) => {
-    const { data: row, error } = await supabase.from("settings").select("value").eq("key", req.params.key).single();
+    if (!isSupabaseConfigured) {
+      if (req.params.key === 'hero_banner') return res.json(mockHero);
+      return res.status(404).json({ error: "Setting not found" });
+    }
+
+    const { data: row, error } = await supabase.from("settings").select("value").eq("key", req.params.key).maybeSingle();
     if (error || !row) return res.status(404).json({ error: "Setting not found" });
     res.json(JSON.parse(row.value));
   });
 
   app.put("/api/settings/:key", authenticateToken, isAdmin, handleUpload("image"), async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const key = req.params.key;
     let value: any;
     try {
@@ -505,11 +759,16 @@ async function startServer() {
     }
 
     if (req.file) {
-      const targetDir = "uploads/banners";
-      if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
-      const targetPath = path.join(targetDir, req.file.filename);
-      fs.renameSync(req.file.path, targetPath);
-      value.image = `/uploads/banners/${req.file.filename}`;
+      try {
+        const fileBuffer = fs.readFileSync(req.file.path);
+        const imageUrl = await uploadToSupabase('banners', req.file.filename, fileBuffer, req.file.mimetype);
+        value.image = imageUrl;
+        // Clean up local file
+        fs.unlinkSync(req.file.path);
+      } catch (err) {
+        console.error("Failed to upload banner to Supabase:", err);
+        return res.status(500).json({ error: "Failed to upload banner to storage" });
+      }
     }
 
     await supabase.from("settings").update({ value: JSON.stringify(value) }).eq("key", key);
@@ -519,6 +778,7 @@ async function startServer() {
 
   // Chapters & PDF Processing
   app.post("/api/manhwa/:id/chapters", authenticateToken, isAdmin, handleUpload("pdf"), async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const { chapter_number, title, coin_price } = req.body;
     const mangaId = req.params.id;
     const pdfPath = req.file?.path;
@@ -554,8 +814,6 @@ async function startServer() {
       if (chapterError || !chapter) throw chapterError || new Error("Failed to create chapter record");
       
       const chapterId = chapter.id;
-
-      console.log(`Processing chapter ${chapter_number} for manhwa ${mangaId} (Chapter ID: ${chapterId})`);
 
       // Dynamic imports for risky dependencies
       let pdfjs: any;
@@ -606,8 +864,6 @@ async function startServer() {
         throw new Error("Failed to parse the PDF document. It might be corrupted or password-protected.");
       }
       
-      console.log(`PDF loaded successfully. Total pages: ${pdf.numPages}`);
-
       const chapterDir = `uploads/chapters/${chapterId}`;
       if (!fs.existsSync(chapterDir)) fs.mkdirSync(chapterDir, { recursive: true });
 
@@ -630,7 +886,6 @@ async function startServer() {
           try {
             canvas = createCanvas(Math.floor(viewport.width), Math.floor(viewport.height));
           } catch (e) {
-            console.warn(`Canvas creation failed at scale ${scale} for page ${i}, falling back to 1.5x`);
             const fallbackViewport = page.getViewport({ scale: 1.5 });
             canvas = createCanvas(Math.floor(fallbackViewport.width), Math.floor(fallbackViewport.height));
           }
@@ -647,11 +902,12 @@ async function startServer() {
 
           const buffer = canvas.toBuffer('image/png');
           const fileName = `page-${i}.png`;
-          const filePath = path.join(chapterDir, fileName);
-          fs.writeFileSync(filePath, buffer);
+          const storagePath = `${chapterId}/${fileName}`;
+          
+          const imageUrl = await uploadToSupabase('chapters', storagePath, buffer, 'image/png');
 
           await supabase.from("pages").insert({
-            chapter_id: chapterId, image_url: `/${filePath}`, page_number: i
+            chapter_id: chapterId, image_url: imageUrl, page_number: i
           });
         } catch (pageErr) {
           console.error(`Error processing page ${i} of chapter ${chapterId}:`, pageErr);
@@ -660,7 +916,6 @@ async function startServer() {
       }
 
       if (fs.existsSync(pdfPath)) fs.unlinkSync(pdfPath); 
-      console.log(`Chapter ${chapter_number} processed successfully. ID: ${chapterId}`);
       io.emit("update", { type: "chapter_added", data: { mangaId, chapterId, chapter_number } });
       res.json({ id: chapterId });
     } catch (error: any) {
@@ -677,25 +932,33 @@ async function startServer() {
   });
 
   app.get("/api/chapters/:id", async (req, res) => {
-    const { data: chapter, error } = await supabase.from("chapters").select("*").eq("id", req.params.id).single();
+    if (!isSupabaseConfigured) {
+      // Find mock chapter
+      const manhwa = mockManhwas.find(m => m.latest_chapters.some(c => c.id === req.params.id));
+      const chapter = manhwa?.latest_chapters.find(c => c.id === req.params.id);
+      if (!chapter) return res.status(404).json({ error: "Chapter not found" });
+      return res.json({ ...chapter, pages: [] });
+    }
+    const { data: chapter, error } = await supabase.from("chapters").select("*").eq("id", req.params.id).maybeSingle();
     if (error || !chapter) return res.status(404).json({ error: "Chapter not found" });
     const { data: pages } = await supabase.from("pages").select("*").eq("chapter_id", req.params.id).order("page_number", { ascending: true });
     res.json({ ...chapter, pages: pages || [] });
   });
 
   app.post("/api/chapters/:id/purchase", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const chapterId = req.params.id;
     const userId = req.user.id;
 
-    const { data: chapter } = await supabase.from("chapters").select("*").eq("id", chapterId).single();
+    const { data: chapter } = await supabase.from("chapters").select("*").eq("id", chapterId).maybeSingle();
     if (!chapter) return res.status(404).json({ error: "Chapter not found" });
 
     if (chapter.coin_price === 0) return res.json({ success: true, message: "Free chapter" });
 
-    const { data: alreadyPurchased } = await supabase.from("user_chapters").select("*").eq("user_id", userId).eq("chapter_id", chapterId).single();
+    const { data: alreadyPurchased } = await supabase.from("user_chapters").select("*").eq("user_id", userId).eq("chapter_id", chapterId).maybeSingle();
     if (alreadyPurchased) return res.json({ success: true, message: "Already purchased" });
 
-    const { data: user } = await supabase.from("users").select("coins").eq("id", userId).single();
+    const { data: user } = await supabase.from("users").select("coins").eq("id", userId).maybeSingle();
     if (!user || user.coins < chapter.coin_price) return res.status(400).json({ error: "Not enough coins" });
 
     try {
@@ -715,11 +978,13 @@ async function startServer() {
   });
 
   app.get("/api/user/purchases", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) return res.json([]);
     const { data: purchases } = await supabase.from("user_chapters").select("chapter_id").eq("user_id", req.user.id);
     res.json(purchases?.map((p: any) => p.chapter_id) || []);
   });
 
   app.patch("/api/chapters/:id/price", authenticateToken, isAdmin, async (req, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const { coin_price } = req.body;
     await supabase.from("chapters").update({ coin_price }).eq("id", req.params.id);
     io.emit("update", { type: "chapter_price_updated", data: { id: req.params.id, coin_price } });
@@ -727,16 +992,19 @@ async function startServer() {
   });
 
   app.get("/api/user/coins", authenticateToken, async (req: any, res) => {
-    const { data: user } = await supabase.from("users").select("coins").eq("id", req.user.id).single();
+    if (!isSupabaseConfigured) return res.json({ coins: 999999 });
+    const { data: user } = await supabase.from("users").select("coins").eq("id", req.user.id).maybeSingle();
     res.json({ coins: user?.coins || 0 });
   });
 
   app.get("/api/user/transactions", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) return res.json([]);
     const { data: transactions } = await supabase.from("coin_transactions").select("*").eq("user_id", req.user.id).order("created_at", { ascending: false });
     res.json(transactions || []);
   });
 
   app.post("/api/user/daily-reward", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const userId = req.user.id;
     const today = new Date().toISOString().split('T')[0];
     
@@ -759,7 +1027,7 @@ async function startServer() {
 
     const rewardAmount = 10;
     try {
-      const { data: user } = await supabase.from("users").select("coins").eq("id", userId).single();
+      const { data: user } = await supabase.from("users").select("coins").eq("id", userId).maybeSingle();
       const newCoins = (user?.coins || 0) + rewardAmount;
       
       await supabase.from("users").update({ coins: newCoins }).eq("id", userId);
@@ -774,26 +1042,56 @@ async function startServer() {
   });
 
   app.get("/api/leaderboard", async (req, res) => {
+    if (!isSupabaseConfigured) {
+      return res.json([
+        { id: "1", username: "Admin (Mock)", coins: 999999 },
+        { id: "2", username: "User1", coins: 5000 },
+        { id: "3", username: "User2", coins: 2500 }
+      ]);
+    }
     const { data: leaderboard } = await supabase.from("users").select("id, username, coins").order("coins", { ascending: false }).limit(10);
     res.json(leaderboard || []);
   });
 
   app.delete("/api/chapters/:id", authenticateToken, isAdmin, async (req, res) => {
-    const { data: chapter } = await supabase.from("chapters").select("*").eq("id", req.params.id).single();
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
+    const chapterId = req.params.id;
+    const { data: chapter } = await supabase.from("chapters").select("*").eq("id", chapterId).maybeSingle();
     if (!chapter) return res.status(404).json({ error: "Chapter not found" });
     
-    // Delete files
-    const chapterDir = `uploads/chapters/${req.params.id}`;
+    // Delete local files if they exist
+    const chapterDir = `uploads/chapters/${chapterId}`;
     if (fs.existsSync(chapterDir)) {
-      fs.rmSync(chapterDir, { recursive: true, force: true });
+      try { fs.rmSync(chapterDir, { recursive: true, force: true }); } catch (e) {}
+    }
+
+    // Delete from Supabase Storage
+    const { data: pages } = await supabase.from("pages").select("image_url").eq("chapter_id", chapterId);
+    if (pages && pages.length > 0) {
+      const pathsToDelete = pages
+        .map(p => {
+          if (p.image_url.includes(supabaseUrl || "")) {
+            // Extract path after bucket name
+            // URL format: .../storage/v1/object/public/chapters/CHAPTER_ID/page-1.png
+            const parts = p.image_url.split('/chapters/');
+            return parts.length > 1 ? parts[1] : null;
+          }
+          return null;
+        })
+        .filter((p): p is string => p !== null);
+      
+      if (pathsToDelete.length > 0) {
+        await deleteFromSupabase('chapters', pathsToDelete);
+      }
     }
     
-    await supabase.from("chapters").delete().eq("id", req.params.id);
+    await supabase.from("chapters").delete().eq("id", chapterId);
     res.sendStatus(200);
   });
 
   // Comments
   app.get("/api/manhwa/:id/comments", async (req, res) => {
+    if (!isSupabaseConfigured) return res.json([]);
     const { data: comments } = await supabase
       .from("comments")
       .select("*, users(username)")
@@ -804,6 +1102,7 @@ async function startServer() {
   });
 
   app.post("/api/manhwa/:id/comments", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     const { comment } = req.body;
     const { data: insertedComment, error } = await supabase.from("comments").insert({
       user_id: req.user.id, manga_id: req.params.id, comment
@@ -815,7 +1114,7 @@ async function startServer() {
       .from("comments")
       .select("*, users(username)")
       .eq("id", insertedComment.id)
-      .single();
+      .maybeSingle();
 
     const formattedComment = { ...newComment, username: newComment.users?.username };
     io.emit("new_comment", { mangaId: req.params.id, comment: formattedComment });
@@ -823,7 +1122,8 @@ async function startServer() {
   });
 
   app.delete("/api/comments/:id", authenticateToken, async (req: any, res) => {
-    const { data: comment } = await supabase.from("comments").select("*").eq("id", req.params.id).single();
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
+    const { data: comment } = await supabase.from("comments").select("*").eq("id", req.params.id).maybeSingle();
     if (!comment) return res.status(404).json({ error: "Comment not found" });
     if (req.user.role !== 'admin' && req.user.role !== 'assistant_admin' && comment.user_id !== req.user.id) return res.status(403).json({ error: "Unauthorized" });
     
@@ -834,6 +1134,7 @@ async function startServer() {
 
   // Bookmarks
   app.post("/api/manhwa/:id/bookmark", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) return res.status(503).json({ error: "Database not configured" });
     try {
       const { data: existing } = await supabase.from("bookmarks").select("*").eq("user_id", req.user.id).eq("manga_id", req.params.id).maybeSingle();
       if (existing) {
@@ -849,6 +1150,7 @@ async function startServer() {
   });
 
   app.get("/api/user/bookmarks", authenticateToken, async (req: any, res) => {
+    if (!isSupabaseConfigured) return res.json([]);
     const { data: bookmarks } = await supabase
       .from("bookmarks")
       .select("manhwa(*)")
@@ -865,7 +1167,6 @@ async function startServer() {
 
   // API 404 handler
   app.all("/api/*", (req, res) => {
-    console.log(`API 404: ${req.method} ${req.originalUrl}`);
     res.status(404).json({ 
       error: "API route not found", 
       method: req.method,
@@ -875,29 +1176,34 @@ async function startServer() {
 
   // --- Vite Middleware ---
   if (process.env.NODE_ENV !== "production") {
+    // Start listening immediately
+    const PORT = 3000;
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      console.log(`Server listening on http://0.0.0.0:${PORT}`);
+    });
+
     try {
       const vite = await createViteServer({
         server: { middlewareMode: true },
         appType: "spa",
       });
       app.use(vite.middlewares);
-      console.log("Vite middleware integrated.");
     } catch (e) {
       console.error("Failed to start Vite server:", e);
     }
   } else {
     app.use(express.static(path.join(__dirname, "dist")));
     app.get("*", (req, res) => res.sendFile(path.join(__dirname, "dist/index.html")));
+    
+    const PORT = 3000;
+    httpServer.listen(PORT, "0.0.0.0", () => {
+      console.log(`Production server listening on http://0.0.0.0:${PORT}`);
+    });
   }
 
   return httpServer;
 }
 
-startServer().then((httpServer) => {
-  const PORT = 3000;
-  httpServer.listen(PORT, "0.0.0.0", () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-  });
-}).catch(err => {
+startServer().catch(err => {
   console.error("CRITICAL: Server failed to start:", err);
 });

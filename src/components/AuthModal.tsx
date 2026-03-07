@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { X, Mail, Lock, User, Loader2 } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../AuthContext';
 
 interface AuthModalProps {
@@ -13,6 +14,7 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const { login } = useAuth();
+  const navigate = useNavigate();
 
   const [formData, setFormData] = useState({
     username: '',
@@ -41,13 +43,11 @@ export default function AuthModal({ isOpen, onClose }: AuthModalProps) {
       }
 
       if (res.ok) {
-        if (isLogin) {
-          login(data.token, data.user);
-          onClose();
-        } else {
-          setIsLogin(true);
-          setError('Registration successful! Please login.');
+        login(data.token, data.user);
+        if (data.user.role === 'admin' || data.user.role === 'assistant_admin') {
+          navigate('/admin');
         }
+        onClose();
       } else {
         setError(data.error || 'Something went wrong');
       }
